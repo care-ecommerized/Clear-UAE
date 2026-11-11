@@ -1,0 +1,1 @@
+import{ad as o,ae as m,s as r}from"./index-B9Lpzmf2.js";const i=(e,a)=>{const t=m(a,e==="/"?"/":e);return`${r}${t}`},L=(e,a=o)=>({"@context":"https://schema.org","@type":"BreadcrumbList",itemListElement:e.map((t,s)=>({"@type":"ListItem",position:s+1,name:t.name,...t.path?{item:i(t.path,a)}:{}}))});export{L as b};

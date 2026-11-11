@@ -1,0 +1,138 @@
+# Never list directory contents (uploads, backend/storage, ...).
+Options -Indexes
+
+# ============================================================
+# Browser caching — makes returning visitors load fast.
+# Images, fonts, and Vite's hashed JS/CSS get a long cache so the
+# browser reuses them instead of re-downloading on every visit.
+# index.html is NEVER cached long, so new deploys appear immediately.
+# (Uploaded images get unique filenames, so caching them is safe;
+#  a replaced image gets a new URL and is fetched fresh.)
+# ============================================================
+<IfModule mod_expires.c>
+    ExpiresActive On
+
+    # Images
+    ExpiresByType image/webp    "access plus 1 year"
+    ExpiresByType image/jpeg    "access plus 1 year"
+    ExpiresByType image/png     "access plus 1 year"
+    ExpiresByType image/gif     "access plus 1 year"
+    ExpiresByType image/svg+xml "access plus 1 year"
+    ExpiresByType image/x-icon  "access plus 1 year"
+
+    # Fonts
+    ExpiresByType font/woff2 "access plus 1 year"
+    ExpiresByType font/woff  "access plus 1 year"
+
+    # CSS / JS — Vite emits content-hashed filenames, so long cache is safe
+    ExpiresByType text/css                "access plus 1 year"
+    ExpiresByType application/javascript  "access plus 1 year"
+    ExpiresByType text/javascript         "access plus 1 year"
+</IfModule>
+
+<IfModule mod_headers.c>
+    # Hashed/unique static assets are immutable — tell browsers to keep them a year.
+    <FilesMatch "\.(?:js|mjs|css|woff2?|webp|jpe?g|png|gif|svg|ico)$">
+        Header set Cache-Control "public, max-age=31536000, immutable"
+    </FilesMatch>
+
+    # Static assets are byte-identical for every browser. LiteSpeed adds
+    # "Vary: User-Agent" to them, which forces Cloudflare to cache a separate
+    # copy per browser UA -> most visitors get a cache MISS and pull the image
+    # from the slow origin. Strip it and keep only Accept-Encoding so the CDN
+    # caches one copy per URL (and gzip/br negotiation still works).
+    <FilesMatch "\.(?:js|mjs|css|woff2?|webp|jpe?g|png|gif|svg|ico)$">
+        Header always unset Vary
+        Header always set Vary "Accept-Encoding"
+    </FilesMatch>
+
+    # Never long-cache the SPA shell, so a new deploy is picked up right away.
+    <FilesMatch "\.html$">
+        Header set Cache-Control "no-cache, must-revalidate"
+    </FilesMatch>
+</IfModule>
+
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+
+    # === SECURITY: never serve VCS metadata, env files, internal docs, or
+    # source/config files from the public web root. Returns 403 before any
+    # other rule. (.well-known is intentionally NOT matched so ACME/SSL works.)
+    RewriteRule (?i)(^|/)\.git      - [F,L]
+    RewriteRule (?i)(^|/)\.env      - [F,L]
+    RewriteRule (?i)^docs(/|$)      - [F,L]
+    RewriteRule (?i)\.(md|sql|sqlite|sqlite3|db|sh|bak|log|lock|code-workspace)$ - [F,L]
+
+    # Laravel lives in /backend; only backend/public/ may be reached over
+    # HTTP. This blocks database.sqlite, storage/ (installer state, sessions,
+    # cache), vendor/, composer.* and every PHP file outside public/. The
+    # internal rewrites to /backend/public/index.php below still work.
+    RewriteRule (?i)^backend(/(?!public(/|$)).*)?$ - [F,L]
+
+    # API + Sanctum + sitemap → Laravel backend
+    RewriteCond %{REQUEST_URI} ^/api/
+    RewriteRule ^api/(.*)$ /backend/public/index.php [L,QSA]
+
+    RewriteCond %{REQUEST_URI} ^/sanctum/
+    RewriteRule ^sanctum/(.*)$ /backend/public/index.php [L,QSA]
+
+    RewriteRule ^sitemap\.xml$ /backend/public/index.php [L,QSA]
+    RewriteRule ^robots\.txt$ /backend/public/index.php [L,QSA]
+
+    # Web installer (/install and /install/*) → Laravel. Laravel itself
+    # returns 404 here once the store is installed.
+    RewriteRule ^install(/.*)?$ /backend/public/index.php [L,QSA]
+
+    # /favicon.ico → Laravel, which redirects to the uploaded Branding
+    # favicon when one is set and otherwise serves the bundled icon.
+    RewriteRule ^favicon\.ico$ /backend/public/index.php [L,QSA]
+
+    # 301 redirects for legacy non-localized URLs to the English locale.
+    # Skip: real files/dirs, /admin/*, /assets/*, anything already under /en or /ar.
+    RewriteCond %{REQUEST_FILENAME} !-f
+    RewriteCond %{REQUEST_FILENAME} !-d
+    RewriteCond %{REQUEST_URI} !^/(en|ar)(/|$)
+    RewriteCond %{REQUEST_URI} !^/admin(/|$)
+    RewriteCond %{REQUEST_URI} !^/api(/|$)
+    RewriteCond %{REQUEST_URI} !^/storage(/|$)
+    RewriteCond %{REQUEST_URI} !^/assets(/|$)
+    RewriteCond %{REQUEST_URI} !\.(xml|txt|ico|png|jpg|jpeg|gif|svg|webp|woff2?|css|js|map)$ [NC]
+    RewriteRule ^(.*)$ /en/$1 [R=301,L]
+
+    # Link-preview crawlers → Laravel for EVERY page route, prerendered ones
+    # included. en/product/x/ is a real directory, so the rule below would
+    # serve its static HTML and PHP would never run — and that HTML can carry
+    # a relative or WebP og:image that WhatsApp/Instagram silently ignore.
+    # SpaController instead injects an absolute, crawler-friendly JPEG with
+    # its dimensions. Real files (images, JS, CSS) still bypass PHP.
+    RewriteCond %{HTTP_USER_AGENT} (facebookexternalhit|meta-externalagent|Facebot|WhatsApp|Twitterbot|LinkedInBot|TelegramBot|Slackbot|Discordbot|Pinterestbot|SkypeUriPreview|redditbot|Snapchat|Viber|vkShare) [NC]
+    RewriteCond %{REQUEST_FILENAME} !-f
+    RewriteRule ^ /backend/public/index.php [L,QSA]
+
+    # Store root → Laravel so `/` gets the branded title/description/OG
+    # (the docroot is a directory, so the static rule below would otherwise
+    # hand it to DirectoryIndex and serve the raw shell).
+    RewriteRule ^$ /backend/public/index.php [L,QSA]
+
+    # Prerendered pages are folders (en/product/x/index.html), but every
+    # canonical, sitemap and internal URL is slash-less (/en/product/x).
+    # Without this the server answers /en/product/x with a 301 to
+    # /en/product/x/ before serving it — ~1s of extra round trip on the
+    # first page of every visit. Serve the folder's index.html directly at
+    # the slash-less URL instead. URLs do not change; only the redirect goes.
+    RewriteCond %{REQUEST_URI} !/$
+    RewriteCond %{REQUEST_FILENAME} -d
+    RewriteCond %{REQUEST_FILENAME}/index.html -f
+    RewriteRule ^(.*)$ /$1/index.html [L]
+
+    # Static assets → serve as-is
+    RewriteCond %{REQUEST_FILENAME} -f [OR]
+    RewriteCond %{REQUEST_FILENAME} -d
+    RewriteRule ^ - [L]
+
+    # SPA fallback → Laravel, which serves index.html with per-page SEO meta
+    # injected (title/description/OG/JSON-LD) for crawlers. Falls back to the
+    # raw shell on any error, so pages never break. Assets/files are already
+    # served directly by the rule above, so only HTML page routes hit PHP.
+    RewriteRule ^ /backend/public/index.php [L,QSA]
+</IfModule>

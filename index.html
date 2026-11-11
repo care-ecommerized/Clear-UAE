@@ -1,0 +1,142 @@
+<!--
+  ============================================================
+  INDEX.HTML — App Entry Point
+  ============================================================
+  What this file does:
+    This is the main HTML page. Vite injects your React app
+    into the root element below. (Do not write that element's
+    tag in this comment: SpaController searches for it.)
+
+  You rarely need to edit this file.
+  ============================================================
+-->
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" href="/favicon.ico" sizes="any" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <!--
+      Title, description, OG, Twitter, and canonical tags are owned by
+      <SEO> (react-helmet-async) on a per-page basis. They aren't repeated
+      here because react-helmet-async dedupes <title> but appends <meta>,
+      which would leave us with two description / og:* tags per page.
+
+      The bare title below is deliberately empty (never a product name):
+      Laravel's SpaController fills it with the store's branded title on
+      every server-rendered page, and Helmet replaces it on hydration.
+    -->
+    <title></title>
+
+    <!-- Web fonts. Loaded here rather than via @import in index.css, which
+         chained three requests (our CSS → font CSS → font files) before any
+         text could paint. One request for the Latin fonts, fetched in
+         parallel with our CSS; the Arabic stack only on Arabic pages. -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,500;0,600;0,700;1,400&family=Inter:wght@300;400;500;600;700&display=swap">
+    <script>
+      // Arabic fonts (Almarai + Noto Sans Arabic) for /ar pages only. Same id
+      // as ThemeApplier's in-app language switch, so it is never added twice.
+      (function () {
+        if (!/^\/ar(\/|$)/.test(location.pathname) || document.getElementById('gf-arabic-stack')) return;
+        var l = document.createElement('link');
+        l.id = 'gf-arabic-stack';
+        l.rel = 'stylesheet';
+        l.href = 'https://fonts.googleapis.com/css2?family=Almarai:wght@400;700;800&family=Noto+Sans+Arabic:wght@300;400;500;600;700&display=swap';
+        document.head.appendChild(l);
+      })();
+    </script>
+
+    <!-- NB: we used to preload /images/hero-main.webp here, but in practice
+         the admin uploads a different hero (stored in site_settings) so the
+         preload was wasted bandwidth competing with the real hero fetch.
+         Instead the hero <img> in HeroSection now relies on fetchpriority=high
+         + a tiny inline boot script that may inject the right preload
+         dynamically once we have the URL cached client-side. -->
+
+    <!-- Inline boot: if a previous visit cached the hero URL in localStorage,
+         inject a high-priority preload for THAT specific URL before any chunk
+         parses. First-visit visitors still pay the LCP cost; repeat visitors
+         get the LCP image fetched in parallel with the JS bundles. -->
+    <!-- Only on the pages that render that hero (HeroSection: the /home-1..3
+         layouts; the live homepage uses HeroSlider, which never caches a URL),
+         and never in the prerender: its browser keeps localStorage between
+         routes, so a cached hero once got baked into the <head> of 65 pages
+         (product pages fetched a 1.2MB image they never show). -->
+    <script>
+      try {
+        var h = localStorage.getItem('ecomweb_hero_url');
+        if (h && /^https?:\/\//.test(h)
+            && navigator.userAgent !== 'ReactSnap'
+            && /^\/(en|ar)\/home-[123]\/?$/.test(location.pathname)) {
+          var l = document.createElement('link');
+          l.rel = 'preload'; l.as = 'image'; l.href = h;
+          l.setAttribute('fetchpriority', 'high');
+          document.head.appendChild(l);
+        }
+      } catch (e) {}
+    </script>
+
+    <!-- Inline boot: re-apply the last admin theme colours (cached by
+         ThemeApplier) onto :root BEFORE first paint, so a refresh doesn't flash
+         the index.css default palette before the JS bundle runs. Inline style on
+         the root outranks the stylesheet's :root defaults, so this wins even
+         though the CSS loads afterwards. -->
+    <script>
+      try {
+        var t = JSON.parse(localStorage.getItem('ecomweb_theme') || 'null');
+        if (t && typeof t === 'object') {
+          var r = document.documentElement;
+          for (var k in t) {
+            if (/^--[a-z-]+$/.test(k) && typeof t[k] === 'string') {
+              r.style.setProperty(k, t[k]);
+            }
+          }
+        }
+      } catch (e) {}
+    </script>
+
+    <!-- Inline boot: paint the homepage slider's photos (cached by HeroSlider on
+         the last visit) BEFORE first paint, onto a placeholder layer the
+         prerendered HTML always contains. Without it a refresh shows the bare
+         brand-colour hero until JS + live settings load. Never under the
+         prerender (its browser keeps localStorage between routes). -->
+    <script>
+      try {
+        var hp = JSON.parse(localStorage.getItem('ecomweb_hero_ph') || 'null');
+        if (Array.isArray(hp) && navigator.userAgent !== 'ReactSnap'
+            && /^\/((en|ar)\/?)?$/.test(location.pathname)) {
+          var css = '';
+          for (var hi = 0; hi < hp.length && hi < 3; hi++) {
+            if (typeof hp[hi] === 'string' && /^(https?:\/\/|\/)[^"'()\\\s]+$/.test(hp[hi])) {
+              css += '[data-hero-ph]>:nth-child(' + (hi + 1) + '){background:url("' + hp[hi] + '") center/cover no-repeat}';
+            }
+          }
+          if (css) {
+            var hs = document.createElement('style');
+            hs.textContent = css;
+            document.head.appendChild(hs);
+          }
+        }
+      } catch (e) {}
+    </script>
+
+    <!-- Race the homepage's blocking API calls against JS parse. Without these
+         the home settings + category-grid don't fetch until React mounts. The
+         browser hands the preloaded response to the matching fetch() call. -->
+    <link rel="preload" as="fetch" href="/api/settings" crossorigin="anonymous">
+    <link rel="preload" as="fetch" href="/api/categories?limit=8" crossorigin="anonymous">
+    <script type="module" crossorigin src="/assets/index-B9Lpzmf2.js"></script>
+    <link rel="modulepreload" crossorigin href="/assets/vendor-react-CWjuNyI6.js">
+    <link rel="modulepreload" crossorigin href="/assets/vendor-query-Coot6sPG.js">
+    <link rel="modulepreload" crossorigin href="/assets/vendor-ui-CowkzpPw.js">
+    <link rel="stylesheet" crossorigin href="/assets/index-Bt-IEwP4.css">
+  </head>
+
+  <body>
+    <div id="root"></div>
+  </body>
+</html>
